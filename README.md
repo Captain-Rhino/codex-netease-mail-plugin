@@ -224,21 +224,6 @@ setx NETEASE_MAIL_SMTP_PASSWORD "your-smtp-authorization-code"
 
 `smtp_enabled` 为 `false` 只表示发信没有开启，不影响读信。
 
-## 发布到 GitHub 前检查
-
-发布前建议确认：
-
-- `.mcp.json` 中没有个人机器路径，或 README 已说明如何修改。
-- 仓库中没有 `.env`、授权码、邮箱密码或真实密钥。
-- 没有提交 `__pycache__/` 或 `*.pyc`。
-- `plugins/netease-mail/.codex-plugin/plugin.json` 存在且插件名为 `netease-mail`。
-- `.agents/plugins/marketplace.json` 中的 `source.path` 是 `./plugins/netease-mail`。
-
-可以用 Codex 的插件校验脚本验证插件目录：
-
-```powershell
-python C:\Users\<你的用户名>\.codex\skills\.system\plugin-creator\scripts\validate_plugin.py .\plugins\netease-mail
-```
 
 ## 安全说明
 

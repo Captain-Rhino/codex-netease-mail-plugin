@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "netease-mail": {
+      "command": "python",
+      "args": [
+        "./scripts/netease_mail_mcp.py"
+      ]
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "netease-mail",
+  "version": "0.1.0",
+  "description": "Use NetEase Mail accounts from Codex through a local IMAP/SMTP MCP server.",
+  "author": {
+    "name": "Local developer"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "NetEase Mail",
+    "shortDescription": "Summarize, search, and draft mail for 163/126/yeah accounts.",
+    "longDescription": "NetEase Mail connects Codex to NetEase-backed mailboxes through a local MCP server. It starts with IMAP read workflows and guarded SMTP sending that must be explicitly enabled.",
+    "developerName": "Local developer",
+    "category": "Productivity",
+    "capabilities": ["Read", "Draft", "Send"],
+    "defaultPrompt": [
+      "Summarize my NetEase inbox from the last week.",
+      "Find recent mail from a sender in my 163 mailbox.",
+      "Draft a reply for this NetEase email."
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "netease-mail",
+  "interface": {
+    "displayName": "NetEase Mail"
+  },
+  "plugins": [
+    {
+      "name": "netease-mail",
+      "source": {
+        "source": "local",
+        "path": "./plugins/netease-mail"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

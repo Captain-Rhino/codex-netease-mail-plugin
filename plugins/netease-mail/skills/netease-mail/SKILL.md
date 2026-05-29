@@ -27,14 +27,17 @@ Optional overrides:
 
 If configuration is missing, explain which variables are missing. Do not ask for the authorization code in chat unless the user explicitly wants setup help.
 
+If the user asks to send email but SMTP is disabled in `get_config_status` or `NETEASE_MAIL_ENABLE_SMTP` is not `true`, explain that SMTP sending must be explicitly enabled and do not call `send_email`.
+
 ## Safe Workflow
 
-1. For mailbox summaries, call `search_emails` first with a narrow date range and a sensible `max_results`.
+1. For mailbox summaries, call `search_emails` first with `max_results` set to 10 or fewer. Do not impose a date range unless the user requests one.
 2. Expand only relevant messages with `read_email`.
 3. Treat snippets and search results as summaries, not full-thread truth.
-4. Draft replies in chat or call `prepare_draft`; this does not save or send mail.
-5. Call `send_email` only after the user explicitly confirms sending. Pass `confirm_send: true`; otherwise the tool refuses to send.
-6. Never delete, move, mark read, or otherwise mutate messages; this first version intentionally does not expose those operations.
+4. For email that needs review, call `prepare_draft` and show the returned `confirmation_card` in chat. The draft is stored only in memory and is not saved to NetEase Mail.
+5. If the user replies `yes`, `send`, `confirm`, `是`, `发送`, or `确认` for the displayed card, call `send_prepared_draft` with the shown `draft_id` and `confirm_send: true`. If the user replies `no`, `cancel`, `否`, or `取消`, call `cancel_prepared_draft` when a `draft_id` exists and do not send.
+6. Direct-send exception: if the same user prompt explicitly says the email can be sent directly, does not need another confirmation, or is already approved, and the recipient plus message intent are clear, treat that prompt as confirmation and call `send_email` with `confirm_send: true` without showing a separate card. If the body, recipient, or intent is ambiguous, use the confirmation-card flow.
+7. Never delete, move, mark read, or otherwise mutate messages; this first version intentionally does not expose those operations.
 
 ## Notes
 

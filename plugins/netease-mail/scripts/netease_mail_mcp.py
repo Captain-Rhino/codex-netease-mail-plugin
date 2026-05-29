@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import email
+import hashlib
 import html
 import imaplib
 import json
@@ -35,6 +36,7 @@ SERVER_NAME = "netease-mail"
 SERVER_VERSION = "0.1.0"
 MAX_RESULTS_CAP = 100
 SEARCH_SCAN_CAP = 500
+PENDING_DRAFTS: dict[str, dict[str, Any]] = {}
 
 
 class PlainHTMLParser(HTMLParser):
@@ -455,7 +457,7 @@ def normalize_recipients(value: Any) -> list[str]:
     return []
 
 
-def tool_prepare_draft(args: dict[str, Any]) -> dict[str, Any]:
+def validated_email_payload(args: dict[str, Any]) -> dict[str, Any]:
     to = normalize_recipients(args.get("to"))
     subject = str(args.get("subject") or "").strip()
     body = str(args.get("body") or "")
@@ -466,13 +468,64 @@ def tool_prepare_draft(args: dict[str, Any]) -> dict[str, Any]:
     if not body.strip():
         raise ValueError("body is required")
     return {
-        "status": "prepared_not_sent",
         "to": to,
         "cc": normalize_recipients(args.get("cc")),
         "bcc": normalize_recipients(args.get("bcc")),
         "subject": subject,
         "body": body,
-        "note": "This draft is not saved to NetEase Mail and has not been sent.",
+    }
+
+
+def draft_id_for_payload(payload: dict[str, Any]) -> str:
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "draft_" + hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+
+
+def build_confirmation_card(payload: dict[str, Any], draft_id: str) -> str:
+    lines = [
+        "+-- Pending NetEase Email ----------------",
+        f"| Draft ID: {draft_id}",
+        f"| To: {', '.join(payload['to'])}",
+    ]
+    if payload["cc"]:
+        lines.append(f"| Cc: {', '.join(payload['cc'])}")
+    if payload["bcc"]:
+        lines.append(f"| Bcc: {', '.join(payload['bcc'])}")
+    lines.extend(
+        [
+            f"| Subject: {payload['subject']}",
+            "|",
+        ]
+    )
+    for body_line in str(payload["body"]).splitlines() or [""]:
+        lines.append(f"| {body_line}")
+    lines.extend(
+        [
+            "|",
+            "| Reply yes/send/confirm to send.",
+            "| Reply no/cancel to cancel.",
+            "+-----------------------------------------",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def tool_prepare_draft(args: dict[str, Any]) -> dict[str, Any]:
+    payload = validated_email_payload(args)
+    draft_id = draft_id_for_payload(payload)
+    PENDING_DRAFTS[draft_id] = payload
+    return {
+        "status": "awaiting_confirmation",
+        "draft_id": draft_id,
+        "to": payload["to"],
+        "cc": payload["cc"],
+        "bcc": payload["bcc"],
+        "subject": payload["subject"],
+        "body": payload["body"],
+        "confirmation_card": build_confirmation_card(payload, draft_id),
+        "accepted_confirmations": ["yes", "send", "confirm"],
+        "accepted_cancellations": ["no", "cancel"],
+        "note": "This draft is stored in memory only and has not been sent.",
     }
 
 
@@ -485,31 +538,46 @@ def tool_send_email(args: dict[str, Any]) -> dict[str, Any]:
     if not config.configured_for_smtp:
         raise ValueError("Missing SMTP configuration: address, SMTP password, or SMTP host")
 
-    to = normalize_recipients(args.get("to"))
-    cc = normalize_recipients(args.get("cc"))
-    bcc = normalize_recipients(args.get("bcc"))
-    subject = str(args.get("subject") or "").strip()
-    body = str(args.get("body") or "")
-    if not to:
-        raise ValueError("to is required")
-    if not subject:
-        raise ValueError("subject is required")
-    if not body.strip():
-        raise ValueError("body is required")
+    payload = validated_email_payload(args)
+    to = payload["to"]
+    cc = payload["cc"]
+    bcc = payload["bcc"]
 
     msg = EmailMessage()
     msg["From"] = config.address
     msg["To"] = ", ".join(to)
     if cc:
         msg["Cc"] = ", ".join(cc)
-    msg["Subject"] = subject
-    msg.set_content(body)
+    msg["Subject"] = payload["subject"]
+    msg.set_content(payload["body"])
 
     recipients = to + cc + bcc
     with smtplib.SMTP_SSL(config.smtp_host, config.smtp_port) as smtp:
         smtp.login(config.address, config.smtp_password)
         smtp.send_message(msg, from_addr=config.address, to_addrs=recipients)
-    return {"status": "sent", "to": to, "cc": cc, "bcc_count": len(bcc), "subject": subject}
+    return {"status": "sent", "to": to, "cc": cc, "bcc_count": len(bcc), "subject": payload["subject"]}
+
+
+def tool_send_prepared_draft(args: dict[str, Any]) -> dict[str, Any]:
+    if args.get("confirm_send") is not True:
+        raise ValueError("confirm_send must be true after explicit user confirmation")
+    draft_id = str(args.get("draft_id") or "").strip()
+    if not draft_id:
+        raise ValueError("draft_id is required")
+    payload = PENDING_DRAFTS.get(draft_id)
+    if payload is None:
+        raise ValueError(f"Unknown or expired draft_id: {draft_id}")
+    result = tool_send_email({**payload, "confirm_send": True})
+    PENDING_DRAFTS.pop(draft_id, None)
+    return {**result, "draft_id": draft_id}
+
+
+def tool_cancel_prepared_draft(args: dict[str, Any]) -> dict[str, Any]:
+    draft_id = str(args.get("draft_id") or "").strip()
+    if not draft_id:
+        raise ValueError("draft_id is required")
+    existed = PENDING_DRAFTS.pop(draft_id, None) is not None
+    return {"status": "cancelled" if existed else "not_found", "draft_id": draft_id}
 
 
 TOOLS: dict[str, dict[str, Any]] = {
@@ -554,7 +622,7 @@ TOOLS: dict[str, dict[str, Any]] = {
         "handler": tool_read_email,
     },
     "prepare_draft": {
-        "description": "Prepare a draft email payload without saving or sending it.",
+        "description": "Prepare an in-memory email draft and return a conversation confirmation card without sending it.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -568,6 +636,31 @@ TOOLS: dict[str, dict[str, Any]] = {
             "additionalProperties": False,
         },
         "handler": tool_prepare_draft,
+    },
+    "send_prepared_draft": {
+        "description": "Send an in-memory draft created by prepare_draft. Requires explicit user confirmation.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "draft_id": {"type": "string"},
+                "confirm_send": {"type": "boolean"},
+            },
+            "required": ["draft_id", "confirm_send"],
+            "additionalProperties": False,
+        },
+        "handler": tool_send_prepared_draft,
+    },
+    "cancel_prepared_draft": {
+        "description": "Cancel an in-memory draft created by prepare_draft without sending it.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "draft_id": {"type": "string"},
+            },
+            "required": ["draft_id"],
+            "additionalProperties": False,
+        },
+        "handler": tool_cancel_prepared_draft,
     },
     "send_email": {
         "description": "Send email through NetEase SMTP. Requires explicit confirmation and SMTP to be enabled.",
